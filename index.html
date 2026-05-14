@@ -363,17 +363,40 @@ body {
 
 </div>
 
+<!-- NEW START MENU CONTAINER -->
+<div id="start-menu" style="position:fixed; bottom:58px; left:10px; width:240px; background:rgba(20,20,20,0.95); border-radius:12px; padding:10px; display:none; z-index:999999; border:1px solid rgba(255,255,255,0.1);">
+    <div style="padding:10px; font-weight:bold; color:#4da3ff; border-bottom:1px solid rgba(255,255,255,0.1); margin-bottom:10px;">
+        🦁 AnimalandiaOS
+    </div>
+    <div onclick="openWindow('Tulo')" style="padding:10px; cursor:pointer; display:flex; align-items:center; gap:10px;">
+        🐢 Tulo Writer
+    </div>
+    <div onclick="openWindow('Explorer')" style="padding:10px; cursor:pointer; display:flex; align-items:center; gap:10px;">
+        📂 File Explorer
+    </div>
+    <div onclick="openWindow('Settings')" style="padding:10px; cursor:pointer; display:flex; align-items:center; gap:10px;">
+        ⚙️ Settings
+    </div>
+    <div onclick="location.reload()" style="padding:10px; cursor:pointer; color:#ff5f56; margin-top:10px;">
+        🛑 Shut Down
+    </div>
+</div>
+
 <div id="taskbar">
+    <!-- THE LION START BUTTON -->
+    <div class="taskbar-icon" id="start-btn" onclick="toggleStartMenu()" style="background:rgba(255,255,255,0.1);">
+        <span style="font-size:20px;">🦁</span>
+    </div>
+    
+    <!-- Dynamic Taskbar Items will be injected here by JS -->
+    <div id="taskbar-apps" style="display:flex; gap:8px;"></div>
+
+    <!-- Existing Static Icons (Optional, or move them to Start Menu) -->
     <div class="taskbar-icon" onclick="openWindow('Browser')">
         <img src="https://cdn-icons-png.flaticon.com/512/5968/5968604.png">
     </div>
-
     <div class="taskbar-icon" onclick="openWindow('Settings')">
         <img src="https://cdn-icons-png.flaticon.com/512/2040/2040509.png">
-    </div>
-
-    <div class="taskbar-icon" onclick="openWindow('Store')">
-        <img src="https://cdn-icons-png.flaticon.com/512/263/263142.png">
     </div>
 </div>
 
@@ -403,6 +426,20 @@ function loginOS() {
     document.getElementById('login-screen').style.display = 'none';
 }
 
+function toggleStartMenu() {
+    const menu = document.getElementById('start-menu');
+    menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+}
+
+// Close start menu if clicking elsewhere
+window.addEventListener('click', (e) => {
+    const menu = document.getElementById('start-menu');
+    const btn = document.getElementById('start-btn');
+    if (!menu.contains(e.target) && !btn.contains(e.target)) {
+        menu.style.display = 'none';
+    }
+});
+
 function applyWallpaper(name) {
     document.body.style.background = wallpapers[name];
     OS.wallpaper = name;
@@ -428,17 +465,65 @@ function notify(text) {
     setTimeout(() => note.remove(), 4000);
 }
 
+function createTaskbarItem(id, title) {
+    const container = document.getElementById('taskbar-apps');
+    const item = document.createElement('div');
+    item.className = 'taskbar-icon';
+    item.id = 'tb-' + id;
+    item.onclick = () => {
+        const win = openWindowsRegistry[id];
+        if (win.style.display === 'none') {
+            win.style.display = 'block';
+            win.style.zIndex = ++z;
+        } else {
+            // If already visible and focused, minimize it
+            if (win.style.zIndex == z) {
+                win.style.display = 'none';
+            } else {
+                win.style.zIndex = ++z;
+            }
+        }
+    };
+    
+    // Simple icon logic based on ID
+    let iconEmoji = '📄';
+    if(id === 'browser') iconEmoji = '🌐';
+    if(id === 'tulo') iconEmoji = '🐢';
+    if(id === 'explorer') iconEmoji = '📂';
+    if(id === 'settings') iconEmoji = '⚙️';
+    
+    item.innerHTML = `<span style="font-size:18px;">${iconEmoji}</span>`;
+    container.appendChild(item);
+}
+
+function removeTaskbarItem(id) {
+    const item = document.getElementById('tb-' + id);
+    if (item) item.remove();
+}
+
+function highlightTaskbar(id) {
+    // Optional: Add a visual indicator (like a border) to the active taskbar item
+    document.querySelectorAll('.taskbar-icon').forEach(el => el.style.borderBottom = 'none');
+    const item = document.getElementById('tb-' + id);
+    if(item) item.style.borderBottom = '2px solid #4da3ff';
+}
+    
 function openWindow(title) {
     const id = title.toLowerCase();
 
+    // If already open, bring to front
     if (openWindowsRegistry[id]) {
         openWindowsRegistry[id].style.display = 'block';
+        openWindowsRegistry[id].style.zIndex = ++z;
+        // Highlight taskbar item
+        highlightTaskbar(id);
         return;
     }
 
     const win = document.createElement('div');
     win.className = 'window';
     win.dataset.desktop = OS.currentDesktop;
+    win.dataset.id = id; // Important for tracking
 
     win.style.left = Math.random() * 300 + 100 + 'px';
     win.style.top = Math.random() * 100 + 80 + 'px';
@@ -453,20 +538,23 @@ function openWindow(title) {
             <div>${title}</div>
             <div></div>
         </div>
-
         <div class="window-content"></div>
         <div class="resize-handle"></div>
     `;
 
     document.getElementById('desktop').appendChild(win);
-
     openWindowsRegistry[id] = win;
+
+    // --- NEW: Create Taskbar Item ---
+    createTaskbarItem(id, title);
 
     renderApp(id, win.querySelector('.window-content'));
 
+    // Close Logic
     win.querySelector('.close').onclick = () => {
         win.remove();
         delete openWindowsRegistry[id];
+        removeTaskbarItem(id); // Remove button
     };
 
     win.querySelector('.min').onclick = () => {
@@ -477,9 +565,14 @@ function openWindow(title) {
         toggleMax(win);
     };
 
+    // Clicking window brings it to front
+    win.addEventListener('mousedown', () => {
+        win.style.zIndex = ++z;
+        highlightTaskbar(id);
+    });
+
     dragWindow(win);
     resizeWindow(win);
-
     notify(title + ' opened');
 }
 
@@ -611,78 +704,54 @@ window.addEventListener('keyup', e => {
 });
 
 function renderApp(id, container) {
-
     if (id === 'browser') {
         container.innerHTML = `
             <div style="display:flex; flex-direction:column; height:100%;">
                 <div style="display:flex; gap:10px; padding:10px;">
-                    <input id="browser-url" class="app-input" placeholder="https://example.com">
+                    <input id="browser-url" class="app-input" placeholder="https://example.com" style="flex:1;">
                     <button class="app-btn" onclick="goBrowser(this)">Go</button>
                 </div>
-
-                <iframe
-                    id="browser-frame"
-                    sandbox="allow-scripts allow-same-origin allow-forms"
-                    style="flex:1; border:none; background:white;">
-                </iframe>
-            </div>
-        `;
+                <iframe id="browser-frame" sandbox="allow-scripts allow-same-origin allow-forms" style="flex:1; border:none; background:white;"></iframe>
+            </div>`;
+    } 
+    else if (id === 'tulo') {
+        // TULO THE TURTLE WRITER
+        container.innerHTML = `
+            <div style="display:flex; flex-direction:column; height:100%; padding:10px; gap:10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h2>🐢 Tulo's Story Writer</h2>
+                    <div>
+                        <button class="app-btn" onclick="saveStory()">💾 Save Story</button>
+                        <button class="app-btn" onclick="clearStory()">🗑️ Clear</button>
+                    </div>
+                </div>
+                <textarea id="story-text" style="flex:1; width:100%; border:none; background:rgba(255,255,255,0.9); padding:15px; font-family:'Georgia', serif; font-size:16px; border-radius:8px; resize:none;" placeholder="Once upon a time in Animalandia..."></textarea>
+                <div id="save-status" style="color:#27c93f; font-size:12px;"></div>
+            </div>`;
     }
-
+    else if (id === 'explorer') {
+        // FILE EXPLORER
+        container.innerHTML = `
+            <div style="display:flex; flex-direction:column; height:100%; padding:15px;">
+                <h2>📂 Animalandia Files</h2>
+                <div id="file-list" style="display:flex; flex-wrap:wrap; gap:15px; margin-top:15px; overflow-y:auto;"></div>
+            </div>`;
+        
+        // Load files
+        setTimeout(() => loadFiles(), 100);
+    }
     else if (id === 'music') {
-        container.innerHTML = `
-            <div style="padding:20px;">
-                <h2>Music Player</h2>
-                <audio controls style="width:100%; margin-top:20px;">
-                    <source src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3">
-                </audio>
-            </div>
-        `;
+        container.innerHTML = `<div style="padding:20px;"><h2>Music Player</h2><audio controls style="width:100%; margin-top:20px;"><source src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"></audio></div>`;
     }
-
     else if (id === 'paint') {
-        container.innerHTML = `
-            <canvas id="paint" width="900" height="500" style="background:white;"></canvas>
-        `;
-
-        setTimeout(initPaint,100);
+        container.innerHTML = `<canvas id="paint" width="900" height="500" style="background:white;"></canvas>`;
+        setTimeout(initPaint, 100);
     }
-
     else if (id === 'settings') {
-        container.innerHTML = `
-            <div style="padding:20px; display:flex; flex-direction:column; gap:14px;">
-                <h2>Settings</h2>
-                <button class="app-btn" onclick="cycleWallpaper()">Wallpaper</button>
-                <button class="app-btn" onclick="notify('Theme changed')">Theme</button>
-                <button class="app-btn" onclick="OS.sounds=!OS.sounds">Toggle Sounds</button>
-            </div>
-        `;
+        container.innerHTML = `<div style="padding:20px; display:flex; flex-direction:column; gap:14px;"><h2>Settings</h2><button class="app-btn" onclick="cycleWallpaper()">Change Wallpaper</button><button class="app-btn" onclick="notify('Theme changed')">Theme</button></div>`;
     }
-
-    else if (id === 'store') {
-        container.innerHTML = `
-            <div style="padding:20px;">
-                <h2>App Store</h2>
-                <br>
-                <button class="app-btn" onclick="openWindow('Calculator')">Install Calculator</button>
-            </div>
-        `;
-    }
-
-    else if (id === 'calculator') {
-        container.innerHTML = `
-            <iframe src="https://www.desmos.com/scientific" style="width:100%; height:100%; border:none;"></iframe>
-        `;
-    }
-
     else {
-        container.innerHTML = `
-            <div style="padding:20px;">
-                <h1>${id}</h1>
-                <br>
-                <p>AnimalandiaOS app window.</p>
-            </div>
-        `;
+        container.innerHTML = `<div style="padding:20px;"><h1>${id}</h1><p>AnimalandiaOS app window.</p></div>`;
     }
 }
 
@@ -705,6 +774,71 @@ function initPaint() {
         if (!draw) return;
 
         ctx.fillRect(e.offsetX,e.offsetY,4,4);
+    });
+}
+
+function saveStory() {
+    const text = document.getElementById('story-text').value;
+    if (!text.trim()) {
+        notify("Tulo says: Write something first!");
+        return;
+    }
+
+    const fileName = prompt("Name your story (e.g., 'LionKingChapter1'):");
+    if (!fileName) return;
+
+    const newFile = {
+        name: fileName,
+        content: text,
+        date: new Date().toLocaleDateString()
+    };
+
+    virtualFileSystem.push(newFile);
+    localStorage.setItem('animal-files', JSON.stringify(virtualFileSystem));
+    
+    notify(`Saved: ${fileName}`);
+    document.getElementById('save-status').innerText = "Story saved to virtual memory!";
+}
+
+function clearStory() {
+    if(confirm("Clear the text area?")) {
+        document.getElementById('story-text').value = "";
+    }
+}
+
+function loadFiles() {
+    const list = document.getElementById('file-list');
+    if (!list) return;
+    
+    list.innerHTML = "";
+    
+    if (virtualFileSystem.length === 0) {
+        list.innerHTML = "<p>No stories yet. Open Tulo to write!</p>";
+        return;
+    }
+
+    virtualFileSystem.forEach((file, index) => {
+        const card = document.createElement('div');
+        card.style.cssText = "background:rgba(255,255,255,0.1); padding:15px; border-radius:8px; width:150px; text-align:center; cursor:pointer; border:1px solid rgba(255,255,255,0.1);";
+        card.innerHTML = `
+            <div style="font-size:30px;">📄</div>
+            <div style="font-weight:bold; margin-top:5px;">${file.name}</div>
+            <div style="font-size:10px; color:#ccc;">${file.date}</div>
+        `;
+        
+        card.onclick = () => {
+            // Open Tulo and load content
+            openWindow('Tulo');
+            setTimeout(() => {
+                const tuloWin = openWindowsRegistry['tulo'];
+                if(tuloWin) {
+                    const textarea = tuloWin.querySelector('#story-text');
+                    if(textarea) textarea.value = file.content;
+                }
+            }, 100);
+        };
+        
+        list.appendChild(card);
     });
 }
 
