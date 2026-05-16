@@ -115,6 +115,14 @@ body {
     padding: 10px;
     border-radius: 10px;
     cursor: pointer;
+    position: relative; /* Allows us to change top/left */
+    transition: transform 0.1s; /* Smooth hover effect */
+}
+
+.desktop-icon.dragging {
+    opacity: 0.7;
+    cursor: grabbing;
+    z-index: 1000; /* Bring to front while dragging */
 }
 
 .desktop-icon:hover,
@@ -138,7 +146,25 @@ body {
     backdrop-filter: blur(24px);
     box-shadow: 0 20px 50px rgba(0,0,0,0.4);
     animation: openAnim .18s ease;
-    transition: all .18s ease;
+    transition: transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94), 
+                opacity 0.2s ease, 
+                left 0.2s ease, 
+                top 0.2s ease, 
+                width 0.2s ease, 
+                height 0.2s ease;
+}
+
+/* Add a visual cue for snap zones (invisible until hovered) */
+.snap-zone-indicator {
+    position: fixed;
+    top: 0;
+    height: 100vh;
+    width: 50%;
+    background: rgba(77, 163, 255, 0.1);
+    border: 2px dashed rgba(77, 163, 255, 0.3);
+    display: none;
+    pointer-events: none;
+    z-index: 99998;
 }
 
 @keyframes openAnim {
@@ -295,6 +321,12 @@ body {
     color: white;
 }
 
+/* Update the inline style or CSS rule for #clock-widget */
+#clock-widget {
+    /* ... existing styles ... */
+    z-index: 999; /* Lowered from 99999. Windows go up to ~100+, so this stays above desktop but below active windows */
+}
+
 .app-btn,
 .app-input {
     padding: 10px;
@@ -337,6 +369,11 @@ body {
     <button onclick="switchDesktop(0)">1</button>
     <button onclick="switchDesktop(1)">2</button>
     <button onclick="switchDesktop(2)">3</button>
+</div>
+
+<div id="clock-widget" style="position:fixed; top:20px; right:20px; background:rgba(20,20,20,0.85); backdrop-filter:blur(10px); padding:15px; border-radius:12px; color:white; font-family:'Segoe UI', sans-serif; z-index:99999; border:1px solid rgba(255,255,255,0.1); display:none;">
+    <div id="clock-time" style="font-size:24px; font-weight:bold; color:#4da3ff;">--:--</div>
+    <div id="clock-date" style="font-size:14px; margin-top:5px; color:#ddd;">Loading...</div>
 </div>
 
 <div id="desktop">
@@ -425,6 +462,10 @@ let virtualFileSystem = JSON.parse(localStorage.getItem('animal-files') || '[]')
 function loginOS() {
     document.getElementById('login-screen').style.display = 'none';
 }
+
+
+// Call this after the login screen is gone
+setTimeout(initDraggableIcons, 3500);
 
 function toggleStartMenu() {
     const menu = document.getElementById('start-menu');
@@ -599,9 +640,12 @@ function toggleMax(win) {
     }
 }
 
+const snapPreview = document.createElement('div');
+snapPreview.className = 'snap-zone-indicator';
+document.body.appendChild(snapPreview);
+
 function dragWindow(win) {
     const bar = win.querySelector('.titlebar');
-
     let dragging = false;
     let ox = 0;
     let oy = 0;
@@ -610,7 +654,6 @@ function dragWindow(win) {
         dragging = true;
         ox = e.clientX - win.offsetLeft;
         oy = e.clientY - win.offsetTop;
-
         win.style.zIndex = ++z;
     });
 
@@ -620,11 +663,45 @@ function dragWindow(win) {
         win.style.left = e.clientX - ox + 'px';
         win.style.top = e.clientY - oy + 'px';
 
-        if (e.clientX <= 10) snapWindow(win, 'left');
-        if (e.clientX >= innerWidth - 10) snapWindow(win, 'right');
+        // --- SNAPPING PREVIEW LOGIC ---
+        const winRect = win.getBoundingClientRect();
+        const screenW = window.innerWidth;
+        const threshold = 20; // Pixels from edge to trigger snap
+
+        // Reset preview
+        snapPreview.style.display = 'none';
+
+        if (e.clientX <= threshold) {
+            // Left Snap Preview
+            snapPreview.style.display = 'block';
+            snapPreview.style.left = '0';
+            snapPreview.style.width = '50%';
+            snapPreview.style.top = '0';
+            snapPreview.style.borderRight = 'none';
+        } else if (e.clientX >= screenW - threshold) {
+            // Right Snap Preview
+            snapPreview.style.display = 'block';
+            snapPreview.style.left = '50%';
+            snapPreview.style.width = '50%';
+            snapPreview.style.top = '0';
+            snapPreview.style.borderLeft = 'none';
+        }
     });
 
-    window.addEventListener('mouseup', () => dragging = false);
+    window.addEventListener('mouseup', () => {
+        dragging = false;
+        snapPreview.style.display = 'none'; // Hide preview on release
+        
+        // Actually snap if close enough
+        const winRect = win.getBoundingClientRect();
+        const screenW = window.innerWidth;
+        
+        if (winRect.left <= 20) {
+            snapWindow(win, 'left');
+        } else if (winRect.right >= screenW - 20) {
+            snapWindow(win, 'right');
+        }
+    });
 }
 
 function resizeWindow(win) {
@@ -654,14 +731,15 @@ function resizeWindow(win) {
 }
 
 function snapWindow(win, side) {
+    // Remove the preview class if it was added via CSS
+    win.style.transition = 'all 0.2s ease'; // Ensure smooth snap
+    
     if (side === 'left') {
         win.style.left = '0';
         win.style.top = '0';
         win.style.width = '50%';
         win.style.height = 'calc(100vh - 48px)';
-    }
-
-    if (side === 'right') {
+    } else if (side === 'right') {
         win.style.left = '50%';
         win.style.top = '0';
         win.style.width = '50%';
@@ -703,16 +781,78 @@ window.addEventListener('keyup', e => {
     }
 });
 
+function updateClock() {
+    const now = new Date();
+    
+    // Time formatting
+    let hours = now.getHours();
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12; // the hour '0' should be '12'
+    
+    const timeString = `${hours}:${minutes} ${ampm}`;
+    
+    // Date formatting
+    const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+    const dateString = now.toLocaleDateString('en-US', options);
+    
+    document.getElementById('clock-time').innerText = timeString;
+    document.getElementById('clock-date').innerText = dateString;
+}
+
+// Initialize and start the clock
+document.addEventListener('DOMContentLoaded', () => {
+    // Show the widget after login (optional: hide during boot)
+    setTimeout(() => {
+        document.getElementById('clock-widget').style.display = 'block';
+        updateClock(); // Run once immediately
+        setInterval(updateClock, 1000); // Update every second
+    }, 3500); // Wait for boot screen to fade out
+});
+    
 function renderApp(id, container) {
     if (id === 'browser') {
+        // Initialize browser data if not exists
+        if (!window.browserData) {
+            window.browserData = {
+                tabs: [{ id: 1, url: 'https://example.com', title: 'New Tab' }],
+                activeTabId: 1,
+                history: [],
+                bookmarks: []
+            };
+        }
+        
         container.innerHTML = `
             <div style="display:flex; flex-direction:column; height:100%;">
-                <div style="display:flex; gap:10px; padding:10px;">
-                    <input id="browser-url" class="app-input" placeholder="https://example.com" style="flex:1;">
-                    <button class="app-btn" onclick="goBrowser(this)">Go</button>
+                <!-- Tab Bar -->
+                <div id="browser-tabs" style="display:flex; gap:2px; background:rgba(0,0,0,0.2); padding:5px 5px 0 5px; overflow-x:auto;"></div>
+                
+                <!-- Toolbar -->
+                <div style="display:flex; gap:10px; padding:8px; background:rgba(255,255,255,0.1); border-bottom:1px solid rgba(255,255,255,0.1);">
+                    <button class="app-btn" onclick="browserBack()" style="padding:5px 10px;">⬅️</button>
+                    <button class="app-btn" onclick="browserForward()" style="padding:5px 10px;">➡️</button>
+                    <button class="app-btn" onclick="browserRefresh()" style="padding:5px 10px;">🔄</button>
+                    <input id="browser-url" class="app-input" placeholder="Enter URL..." style="flex:1;" onkeypress="if(event.key==='Enter') browserGo()">
+                    <button class="app-btn" onclick="browserGo()">Go</button>
+                    <button class="app-btn" onclick="addBookmark()" style="padding:5px 10px;">⭐</button>
+                    <button class="app-btn" onclick="showBookmarksPanel()" style="padding:5px 10px;">📑</button>
                 </div>
-                <iframe id="browser-frame" sandbox="allow-scripts allow-same-origin allow-forms" style="flex:1; border:none; background:white;"></iframe>
+                
+                <!-- Content Area -->
+                <div id="browser-content" style="flex:1; position:relative; background:white;">
+                    <!-- Iframes will be injected here -->
+                </div>
+                
+                <!-- Bookmarks Panel (Hidden by default) -->
+                <div id="bookmarks-panel" style="position:absolute; top:0; right:0; width:250px; height:100%; background:rgba(20,20,20,0.95); z-index:100; padding:10px; display:none; overflow-y:auto;">
+                    <h3>📑 Bookmarks</h3>
+                    <div id="bookmarks-list" style="margin-top:10px;"></div>
+                    <button class="app-btn" onclick="closeBookmarksPanel()" style="margin-top:10px; width:100%;">Close</button>
+                </div>
             </div>`;
+        
+        setTimeout(renderBrowserTabs, 50);
     } 
     else if (id === 'tulo') {
         // TULO THE TURTLE WRITER
@@ -744,8 +884,22 @@ function renderApp(id, container) {
         container.innerHTML = `<div style="padding:20px;"><h2>Music Player</h2><audio controls style="width:100%; margin-top:20px;"><source src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"></audio></div>`;
     }
     else if (id === 'paint') {
-        container.innerHTML = `<canvas id="paint" width="900" height="500" style="background:white;"></canvas>`;
-        setTimeout(initPaint, 100);
+        container.innerHTML = `
+            <div style="display:flex; flex-direction:column; height:100%; padding:10px; gap:10px;">
+                <div style="display:flex; gap:10px; align-items:center; background:rgba(0,0,0,0.2); padding:10px; border-radius:8px;">
+                    <label>Color:</label>
+                    <input type="color" id="pixel-color" value="#000000">
+                    <label>Size:</label>
+                    <input type="range" id="pixel-size" min="1" max="10" value="4">
+                    <button class="app-btn" onclick="clearCanvas()">🗑️ Clear</button>
+                    <button class="app-btn" onclick="downloadPixelArt()">💾 Save</button>
+                </div>
+                <div style="flex:1; display:flex; justify-content:center; align-items:center; overflow:auto;">
+                    <canvas id="pixel-canvas" width="64" height="64" style="border:2px solid #4da3ff; image-rendering: pixelated; background: white; width: 512px; height: 512px; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></canvas>
+                </div>
+            </div>`;
+        
+        setTimeout(initPixelPaint, 100);
     }
     else if (id === 'settings') {
         container.innerHTML = `<div style="padding:20px; display:flex; flex-direction:column; gap:14px;"><h2>Settings</h2><button class="app-btn" onclick="cycleWallpaper()">Change Wallpaper</button><button class="app-btn" onclick="notify('Theme changed')">Theme</button></div>`;
@@ -754,11 +908,177 @@ function renderApp(id, container) {
         container.innerHTML = `<div style="padding:20px;"><h1>${id}</h1><p>AnimalandiaOS app window.</p></div>`;
     }
 }
-
+    
 function goBrowser(btn) {
     const parent = btn.closest('.window-content');
     const url = parent.querySelector('#browser-url').value;
     parent.querySelector('#browser-frame').src = url;
+}
+
+// Helper to get current active tab data
+function getActiveTab() {
+    return window.browserData.tabs.find(t => t.id === window.browserData.activeTabId);
+}
+
+function renderBrowserTabs() {
+    const container = document.getElementById('browser-tabs');
+    const contentContainer = document.getElementById('browser-content');
+    if (!container || !contentContainer) return;
+
+    container.innerHTML = '';
+    contentContainer.innerHTML = '';
+
+    window.browserData.tabs.forEach(tab => {
+        // Create Tab Button
+        const tabBtn = document.createElement('div');
+        tabBtn.style.cssText = "padding:8px 15px; background:rgba(255,255,255,0.1); border-radius:8px 8px 0 0; cursor:pointer; font-size:14px; display:flex; align-items:center; gap:5px;";
+        if (tab.id === window.browserData.activeTabId) {
+            tabBtn.style.background = 'rgba(255,255,255,0.25)';
+            tabBtn.style.fontWeight = 'bold';
+        }
+        
+        tabBtn.innerHTML = `
+            <span>${tab.title.substring(0, 15)}${tab.title.length > 15 ? '...' : ''}</span>
+            <span onclick="closeTab(${tab.id}, event)" style="margin-left:5px; opacity:0.6;">&times;</span>
+        `;
+        
+        tabBtn.onclick = () => switchTab(tab.id);
+        container.appendChild(tabBtn);
+
+        // Create Iframe for this tab
+        const iframe = document.createElement('iframe');
+        iframe.src = tab.url;
+        iframe.style.cssText = "width:100%; height:100%; border:none; display:" + (tab.id === window.browserData.activeTabId ? 'block' : 'none');
+        iframe.id = `iframe-${tab.id}`;
+        
+        // Update URL bar when iframe loads (basic)
+        iframe.onload = () => {
+            const urlInput = document.getElementById('browser-url');
+            if(urlInput) urlInput.value = tab.url;
+            // Try to get title (might fail due to CORS, but good for local/simple sites)
+            try {
+                tab.title = iframe.contentDocument.title || tab.url;
+                renderBrowserTabs(); // Re-render to update title
+            } catch(e) {}
+        };
+
+        contentContainer.appendChild(iframe);
+    });
+}
+
+function switchTab(id) {
+    window.browserData.activeTabId = id;
+    renderBrowserTabs();
+    // Update URL bar
+    const tab = getActiveTab();
+    const urlInput = document.getElementById('browser-url');
+    if(urlInput && tab) urlInput.value = tab.url;
+}
+
+function closeTab(id, e) {
+    if(e) e.stopPropagation();
+    const index = window.browserData.tabs.findIndex(t => t.id === id);
+    if (index === -1) return;
+
+    window.browserData.tabs.splice(index, 1);
+    
+    // If we closed the active tab, switch to another
+    if (window.browserData.activeTabId === id) {
+        window.browserData.activeTabId = window.browserData.tabs.length > 0 ? window.browserData.tabs[0].id : null;
+    }
+    
+    if (window.browserData.tabs.length === 0) {
+        // If no tabs left, maybe close window? Or just leave empty.
+        // For now, let's just create a new blank tab
+        const newId = Date.now();
+        window.browserData.tabs.push({ id: newId, url: 'about:blank', title: 'New Tab' });
+        window.browserData.activeTabId = newId;
+    }
+    
+    renderBrowserTabs();
+}
+
+function browserGo() {
+    const urlInput = document.getElementById('browser-url');
+    let url = urlInput.value;
+    
+    if (!url.startsWith('http')) {
+        url = 'https://' + url;
+    }
+
+    const activeTab = getActiveTab();
+    if (activeTab) {
+        // Add to history
+        window.browserData.history.push({ url: activeTab.url, time: Date.now() });
+        activeTab.url = url;
+        activeTab.title = url; // Default title
+        renderBrowserTabs();
+    }
+}
+
+function browserBack() {
+    // Simple back logic: pop last history item
+    if (window.browserData.history.length > 0) {
+        const last = window.browserData.history.pop();
+        const activeTab = getActiveTab();
+        if (activeTab) {
+            activeTab.url = last.url;
+            renderBrowserTabs();
+        }
+    }
+}
+
+function browserForward() {
+    // Forward logic requires a forward stack, skipping for simplicity or implement if needed
+    notify("Forward history not implemented yet.");
+}
+
+function browserRefresh() {
+    const activeTab = getActiveTab();
+    if (activeTab) {
+        const iframe = document.getElementById(`iframe-${activeTab.id}`);
+        if (iframe) iframe.src = iframe.src;
+    }
+}
+
+function addBookmark() {
+    const activeTab = getActiveTab();
+    if (!activeTab) return;
+    
+    const title = prompt("Name this bookmark:", activeTab.title);
+    if (title) {
+        window.browserData.bookmarks.push({ title: title, url: activeTab.url });
+        notify("Bookmark added!");
+        showBookmarksPanel();
+    }
+}
+
+function showBookmarksPanel() {
+    const panel = document.getElementById('bookmarks-panel');
+    const list = document.getElementById('bookmarks-list');
+    if (!panel || !list) return;
+    
+    list.innerHTML = '';
+    window.browserData.bookmarks.forEach(bm => {
+        const item = document.createElement('div');
+        item.style.cssText = "padding:8px; border-bottom:1px solid rgba(255,255,255,0.1); cursor:pointer;";
+        item.innerHTML = `<strong>${bm.title}</strong><br><small>${bm.url}</small>`;
+        item.onclick = () => {
+            const activeTab = getActiveTab();
+            if(activeTab) {
+                activeTab.url = bm.url;
+                renderBrowserTabs();
+            }
+            closeBookmarksPanel();
+        };
+        list.appendChild(item);
+    });
+    
+    panel.style.display = 'block';
+}
+
+function closeBookmarksPanel() {
+    document.getElementById('bookmarks-panel').style.display = 'none';
 }
 
 function initPaint() {
@@ -897,6 +1217,126 @@ window.onload = () => {
 
     notify('Welcome to AnimalandiaOS Ultimate');
 };
+
+    function initDraggableIcons() {
+    const icons = document.querySelectorAll('.desktop-icon');
+    let activeIcon = null;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    icons.forEach(icon => {
+        icon.addEventListener('mousedown', (e) => {
+            // Prevent dragging if clicking text or image specifically (optional refinement)
+            if (e.target.tagName === 'IMG' || e.target.tagName === 'DIV') return;
+
+            activeIcon = icon;
+            
+            // Calculate offset so the icon doesn't jump to mouse cursor
+            const rect = icon.getBoundingClientRect();
+            offsetX = e.clientX - rect.left;
+            offsetY = e.clientY - rect.top;
+
+            icon.classList.add('dragging');
+            icon.style.position = 'absolute'; // Switch to absolute for free movement
+            
+            // Set initial position relative to viewport
+            icon.style.left = (rect.left) + 'px';
+            icon.style.top = (rect.top) + 'px';
+        });
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!activeIcon) return;
+
+        e.preventDefault();
+        
+        // Move the icon
+        const newX = e.clientX - offsetX;
+        const newY = e.clientY - offsetY;
+
+        activeIcon.style.left = newX + 'px';
+        activeIcon.style.top = newY + 'px';
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (activeIcon) {
+            activeIcon.classList.remove('dragging');
+            // Optional: Snap to grid logic could go here
+            activeIcon = null;
+        }
+    });
+}
+
+function initPixelPaint() {
+    const canvas = document.getElementById('pixel-canvas');
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    const colorInput = document.getElementById('pixel-color');
+    const sizeInput = document.getElementById('pixel-size');
+    
+    // Fill white background initially
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    let drawing = false;
+
+    function getMousePos(evt) {
+        const rect = canvas.getBoundingClientRect();
+        // Calculate scale factor (visual size / internal size)
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        return {
+            x: Math.floor((evt.clientX - rect.left) * scaleX),
+            y: Math.floor((evt.clientY - rect.top) * scaleY)
+        };
+    }
+
+    function drawPixel(e) {
+        const pos = getMousePos(e);
+        const size = parseInt(sizeInput.value);
+        const color = colorInput.value;
+
+        ctx.fillStyle = color;
+        // Draw a square of 'size' pixels
+        ctx.fillRect(pos.x, pos.y, size, size);
+    }
+
+    canvas.addEventListener('mousedown', (e) => {
+        drawing = true;
+        drawPixel(e);
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+        if (!drawing) return;
+        drawPixel(e);
+    });
+
+    canvas.addEventListener('mouseup', () => drawing = false);
+    canvas.addEventListener('mouseleave', () => drawing = false);
+}
+
+function clearCanvas() {
+    const canvas = document.getElementById('pixel-canvas');
+    if (canvas) {
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+}
+
+function downloadPixelArt() {
+    const canvas = document.getElementById('pixel-canvas');
+    if (!canvas) return;
+    
+    const link = document.createElement('a');
+    link.download = 'animalandia-art.png';
+    link.href = canvas.toDataURL();
+    link.click();
+    notify("Pixel art saved to downloads!");
+}
+
 </script>
 
 </body>
